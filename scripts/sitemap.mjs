@@ -13,9 +13,8 @@ const SITIO = (process.env.VITE_SITE_URL ?? 'https://cacha-el-precio.com').repla
   '',
 )
 
-// En Node no existe el proxy de Vite: una base relativa como /api no sirve.
-// PRODUCT_SERVICE_URL es el destino absoluto que también usa vite.config.js;
-// VITE_API_BASE_URL queda como alternativa únicamente cuando ya es absoluta.
+// Node no usa el proxy de Vite. Se prefiere el destino absoluto del gateway y,
+// si no está definido, una VITE_API_BASE_URL absoluta.
 const env = loadEnv('production', process.cwd(), '')
 
 const apiConfigurada = env.PRODUCT_SERVICE_URL ?? env.BACKEND_URL
@@ -25,7 +24,6 @@ const apiPublica = /^https?:\/\//.test(env.VITE_API_BASE_URL ?? '')
 const API = (apiConfigurada ?? apiPublica ?? 'https://api.cacha-el-precio.com')
   .replace(/\/+$/, '')
   .replace(/\/api$/, '')
-  .concat('/api')
 
 // Versión del contrato ASP.NET Core, enviada mediante la cabecera `Version`.
 const VERSION = env.VITE_API_VERSION ?? '1.0'
@@ -57,13 +55,16 @@ const vite = await createServer({
 try {
   const { routes } = await vite.ssrLoadModule('/src/core/router/routes.js')
   const { slugProducto } = await vite.ssrLoadModule('/src/shared/utils/slug.js')
+  const { adaptarProductos } = await vite.ssrLoadModule(
+    '/src/modules/comparador/services/producto.adapter.js',
+  )
 
   // Productos contra el backend real. Si el backend no está (build local sin
   // URL de API), el sitemap queda con las páginas estáticas y listo: generar
   // el sitemap no debe tumbar la compilación.
   let productos = []
   try {
-    const respuesta = await fetch(`${API}/products`, {
+    const respuesta = await fetch(`${API}/productos`, {
       headers: {
         Accept: 'application/json',
         Version: VERSION,
@@ -71,12 +72,12 @@ try {
     })
 
     if (!respuesta.ok) {
-      console.warn(`sitemap · GET /api/products → ${respuesta.status}: sin productos`)
+      console.warn(`sitemap · GET /productos → ${respuesta.status}: sin productos`)
     } else {
       productos = await respuesta.json()
     }
   } catch (error) {
-    console.warn(`sitemap · GET /api/products no disponible: ${error.message}`)
+    console.warn(`sitemap · GET /productos no disponible: ${error.message}`)
   }
 
   const paginas = routes.filter(
@@ -94,10 +95,19 @@ try {
 
   const hoy = new Date().toISOString().slice(0, 10)
 
-  // El detalle se sirve en /producto/<slug>, con el slug derivado del nombre
-  // (ver shared/utils/slug.js). El slug que genera este script y el que genera
-  // la app en el navegador son idénticos porque usan la misma función.
-  const urlsProductos = productos
+  // El detalle se sirve en /producto/<slug> (ver shared/utils/slug.js).
+  //
+  // ⚠️ Hay que ADAPTAR las filas antes de pedir el slug. La API devuelve
+  // `name`, `price` y `store`; `slugProducto` espera el modelo de la
+  // aplicación, con `nombre` y `precios[]`. Pasándole la fila cruda entraba
+  // siempre por su guarda de respaldo y devolvía la cadena literal
+  // 'producto': el sitemap emitía N veces la MISMA URL, /producto/producto,
+  // que además no corresponde a ningún producto. Verificado con el backend
+  // levantado: 3 productos, 3 entradas idénticas.
+  //
+  // Adaptando, el slug es exactamente el que construye la aplicación en el
+  // navegador, porque sale de la misma función sobre los mismos datos.
+  const urlsProductos = adaptarProductos(productos)
     .map((producto) =>
       [
         '  <url>',

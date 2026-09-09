@@ -1,6 +1,7 @@
 // Traducción entre el Product Service y el modelo del comparador.
 //
-//   API   Product { id, canonicalKey, name, brand, category, image, offers[] }
+//   API   Product { id, canonicalKey, name, brand, category, description,
+//                   image, visits, createdAt, offers[] }
 //         Offer   { id, externalId, store, price, sizes[], url, image,
 //                   active, updatedAt }
 //   App   Producto { id, nombre, categoria, precios[], historial[] }
@@ -63,6 +64,9 @@ function tallasDisponibles(sizes) {
   )
 }
 
+// Durante el despliegue puede convivir brevemente el contrato nuevo con la
+// forma plana anterior. Tratar la propia fila como oferta mantiene la web
+// compatible mientras se renuevan las instancias del backend.
 function ofertasDe(producto) {
   return Array.isArray(producto?.offers) ? producto.offers : [producto]
 }
@@ -105,11 +109,13 @@ export function adaptarProductos(filas = []) {
   return filas
     .filter((fila) => texto(fila?.name))
     .map((fila) => {
-      const ofertas = ofertasDe(fila)
+      const ofertasOriginales = ofertasDe(fila)
+      const ofertas = ofertasOriginales
         .filter((oferta) => Number.isFinite(Number(oferta?.price)))
         .map((oferta) => ({
           tienda: idTienda(oferta.store) || FUENTE_UNICA.id,
           precio: Number(oferta.price),
+          // El backend aún no conserva precio de lista ni historial.
           precioLista: null,
           stock: oferta.active !== false,
           url: texto(oferta.url) || null,
@@ -117,8 +123,8 @@ export function adaptarProductos(filas = []) {
           imagen: texto(oferta.image) || null,
         }))
 
-      const primera = ofertasDe(fila)[0] ?? {}
-      const ultimaActualizacion = ofertasDe(fila)
+      const primera = ofertasOriginales[0] ?? {}
+      const ultimaActualizacion = ofertasOriginales
         .map((oferta) => oferta?.updatedAt)
         .filter(Boolean)
         .sort()
@@ -131,8 +137,8 @@ export function adaptarProductos(filas = []) {
         marca: texto(fila.brand),
         categoria: texto(fila.category),
         imagen: texto(fila.image) || ofertas.find((oferta) => oferta.imagen)?.imagen || null,
-        visitas: 0,
-        agregadoHace: diasDesde(ultimaActualizacion ?? fila.createdAt),
+        vistas: Number(fila.visits ?? 0) || 0,
+        agregadoHace: diasDesde(fila.createdAt ?? ultimaActualizacion),
         codigo: texto(fila.canonicalKey) || texto(primera.externalId),
         specs: {},
         pros: [],
