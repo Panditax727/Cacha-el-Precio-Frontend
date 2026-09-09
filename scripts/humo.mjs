@@ -127,12 +127,15 @@ try {
 
     // Forma exacta que devuelve ProductResponse en el backend ASP.NET Core.
     const FILAS = [
-      { id: 2, externalId: 'rip-2', store: 'Ripley', name: 'Polera básica', brand: 'Basement', category: 'Poleras', price: 9990, sizes: { xs: true, s: true }, description: 'Algodón', url: 'https://example.com/2', image: null, active: true },
-      { id: 4, store: 'Ripley', name: 'Polera manga larga', brand: 'Basement', category: 'Poleras', price: 15990, sizes: { m: true }, active: false },
-      { id: 5, store: 'Zara', name: 'Jeans slim', brand: 'Zara', category: ' Pantalones ', price: 29990, sizes: { l: true, xl: true }, active: true },
-      { id: 8, store: null, name: 'Sin tienda', brand: '', category: '', price: 100, sizes: {}, active: true },
-      { id: 9, store: 'Paris', name: '', brand: 'X', category: 'Poleras', price: 100, sizes: {}, active: true },
-      { id: 10, store: 'Paris', name: 'Rota', brand: 'X', category: 'Poleras', price: 'x', sizes: {}, active: true },
+      { id: 2, canonicalKey: 'basement:polera-basica', name: 'Polera básica', brand: 'Basement', category: 'Poleras', description: 'Algodón', image: null, offers: [
+        { id: 20, externalId: 'rip-2', store: 'Ripley', price: 9990, sizes: ['XS', 'S', '38', '42.5'], url: 'https://example.com/2', image: null, active: true },
+        { id: 21, externalId: 'par-2', store: 'Paris', price: 8990, sizes: ['M'], url: 'https://example.com/paris/2', image: 'https://img.example/2.webp', active: true },
+      ] },
+      { id: 4, name: 'Polera manga larga', brand: 'Basement', category: 'Poleras', offers: [{ store: 'Ripley', price: 15990, sizes: ['M'], active: false }] },
+      { id: 5, name: 'Jeans slim', brand: 'Zara', category: ' Pantalones ', offers: [{ store: 'Zara', price: 29990, sizes: ['L', 'XL'], active: true }] },
+      { id: 8, name: 'Sin tienda', brand: '', category: '', offers: [{ store: null, price: 100, sizes: [], active: true }] },
+      { id: 9, name: '', brand: 'X', category: 'Poleras', offers: [{ store: 'Paris', price: 100, sizes: [], active: true }] },
+      { id: 10, name: 'Rota', brand: 'X', category: 'Poleras', offers: [{ store: 'Paris', price: 'x', sizes: [], active: true }] },
     ]
 
     const adaptados = adaptarProductos(FILAS)
@@ -146,11 +149,15 @@ try {
       adaptados.find((p) => p.id === '8').categoria === '')
     check('  active=false se traduce a sin stock',
       adaptados.find((p) => p.id === '4').precios[0].stock === false)
-    check('  adapta marca y externalId',
+    check('  adapta marca y canonicalKey',
       adaptados.find((p) => p.id === '2').marca === 'Basement' &&
-      adaptados.find((p) => p.id === '2').codigo === 'rip-2')
-    check('  convierte el objeto sizes en tallas disponibles',
-      adaptados.find((p) => p.id === '2').precios[0].tallas.join(',') === 'XS,S')
+      adaptados.find((p) => p.id === '2').codigo === 'basement:polera-basica')
+    check('  conserva tallas alfabéticas y numéricas',
+      adaptados.find((p) => p.id === '2').precios[0].tallas.join(',') === 'XS,S,38,42.5')
+    check('  agrupa varias tiendas en un producto',
+      adaptados.find((p) => p.id === '2').precios.length === 2)
+    check('  usa una imagen de oferta como respaldo',
+      adaptados.find((p) => p.id === '2').imagen === 'https://img.example/2.webp')
     check('  sin precio de lista no inventa descuento',
       adaptados.every((p) => p.precios[0].precioLista === null))
     check('  historial vacío, no undefined',
@@ -174,9 +181,8 @@ try {
 
     const { precioMasBajo: pmb, ahorroMaximo: am } = await load('/src/shared/utils/precios.js')
     const polera = adaptados.find((p) => p.id === '2')
-    check('el cálculo de precio sigue funcionando con una sola oferta',
-      pmb(polera).precio === 9990)
-    check('  y el ahorro es cero: no hay nada que comparar', am(polera) === 0)
+    check('el cálculo elige la oferta más barata', pmb(polera).precio === 8990)
+    check('  y calcula el ahorro entre tiendas', am(polera) === 1000)
     check('  un producto sin stock no tiene precio más bajo',
       pmb(adaptados.find((p) => p.id === '4')) === null)
   }

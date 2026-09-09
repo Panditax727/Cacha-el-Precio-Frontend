@@ -30,7 +30,7 @@ Vite y el proxy conserva ese prefijo al reenviar.
 |---|---|
 | El contrato vigente es `1.0` | `core/api/http.js` manda `Version: 1.0` en cada petición |
 | Las rutas públicas son `GET /api/products` y `GET /api/products/{id}` | `VITE_API_BASE_URL=/api` y el servicio llama a `/products` |
-| El frontend y el gateway ocupan puertos distintos en desarrollo | el proxy de Vite reenvía `/api` a `BACKEND_URL=http://localhost:8080` |
+| El frontend y el gateway ocupan puertos distintos en desarrollo | el proxy de Vite reenvía `/api` a `PRODUCT_SERVICE_URL=http://localhost:8080` |
 | ASP.NET y el gateway pueden devolver Problem Details o `{ error, mensaje }` | el interceptor traduce ambos formatos a mensajes mostrables |
 
 > **Para producción el proxy no sirve.** O el front y la API van bajo el mismo
@@ -39,35 +39,24 @@ Vite y el proxy conserva ese prefijo al reenviar.
 ### El modelo no coincide, y hay un adaptador
 
 ```
-API   Product { id, externalId, store, name, brand, category, price,
-                sizes, description, url, image, active }
+API   Product { id, canonicalKey, name, brand, category, image, offers[] }
+      Offer   { id, externalId, store, price, sizes[], url, image, active }
 App   Producto { id, nombre, categoria, precios[], historial[] }
 ```
 
 `services/producto.adapter.js` traduce una cosa en la otra. `category` alimenta
-los filtros, `store` identifica la fuente de precio y `sizes` se transforma en
-la lista de tallas disponibles.
+los filtros, cada elemento de `offers` se vuelve un precio por tienda y `sizes`
+acepta tallas alfabéticas y numéricas (`S`, `38`, `42.5`).
 
-#### Lo que falta para que esto sea un comparador
-
-La API guarda una oferta por fila, pero todavía no relaciona automáticamente
-el mismo artículo entre varias tiendas. Para comparar una prenda equivalente
-hace falta una identidad de producto compartida y ofertas separadas:
-
-```
-Oferta { id, productoId, tiendaId, precio, precioLista, stock, fecha }
-Tienda { id, nombre }
-```
-
-Con eso el adaptador agrupa por `productoId` y **todo lo demás ya está escrito**:
-el cálculo del más barato, el ahorro entre tiendas, el gráfico de historial y
-los filtros por tienda.
+La API ya agrupa un producto canónico con varias ofertas. La clave
+`canonicalKey` representa marca/modelo y `(store, externalId)` identifica una
+oferta, de modo que el comparador puede mostrar el precio de cada tienda en una
+sola ficha.
 
 Mientras tanto la interfaz se degrada sola en vez de mentir:
 
 | Falta en la API | Qué hace la app hoy |
 |---|---|
-| agrupación del mismo producto entre tiendas | cada oferta se muestra como un producto independiente |
 | precio de lista | no pinta el porcentaje de descuento |
 | stock por talla | usa `active` para la oferta y `sizes` para cada talla |
 | historial de precios | la ficha muestra «todavía no tenemos historial» |
