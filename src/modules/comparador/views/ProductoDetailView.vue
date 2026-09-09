@@ -1,8 +1,11 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRouter } from 'vue-router'
 
 import { useComparadorStore } from '@/modules/comparador/store/comparador.store'
+import { registrarVisita } from '@/modules/comparador/services/comparador.service'
+import { rutaNoEncontrada } from '@/modules/comparador/routes'
 import { useTiendas } from '@/modules/comparador/composables/useTiendas'
 import { formatearFecha, formatearPrecio } from '@/shared/utils/formato'
 import { descuento, minimoHistorico, precioMasBajo } from '@/shared/utils/precios'
@@ -24,28 +27,85 @@ const props = defineProps({
 })
 
 const store = useComparadorStore()
+const router = useRouter()
 const { producto, cargando, error } = storeToRefs(store)
 const { nombreTienda, colorTienda } = useTiendas()
 
 // La URL del detalle es el slug, pero la API identifica los productos por id.
 // La vista resuelve slug -> id mirando el catálogo ya cargado en el store (si
 // no está cargado, se trae antes). Con el slug se llega a la URL y con el id
-// se pide la ficha; si el slug no corresponde a ningún producto, se muestra
-// como si ya no estuviera.
+// se pide la ficha.
+//
+// Si el slug no corresponde a ningún producto, se va al 404 de verdad y no se
+// pinta la ficha vacía. El motivo no es estético:
+//
+//   · el patrón `/producto/:slug` acepta CUALQUIER texto, así que hay
+//     infinitas URLs válidas. Quedándose aquí, todas responden como página
+//     buena: para Google eso es un «soft 404» y penaliza el sitio entero;
+//   · la ruta del 404 lleva `meta.sinAnuncios`, y esta no. Pintando la ficha
+//     vacía, el layout muestra igual su bloque de cierre — un anuncio en una
+//     página sin contenido propio, que es lo que las políticas de AdSense
+//     prohíben y puede costar la cuenta completa.
+//
+// Se usa `replace` y no `push` para que la URL mala no quede en el historial:
+// el botón de atrás no debe devolver a una página que no existe.
 async function cargarPorSlug(slug) {
   if (store.productos.length === 0) {
     await store.cargarProductos()
+  }
+
+  // `cargarProductos` NUNCA lanza: captura el fallo y lo deja en `store.error`
+  // para no borrar lo que ya estuviera en pantalla. Así que hay que
+  // preguntárselo explícitamente. Si la carga falló, no sabemos si el producto
+  // existe, y mandar al 404 afirmaría algo que no nos consta: se muestra el
+  // estado de error con reintento, que es lo que el usuario necesita en una
+  // caída. Enviar al 404 aquí convertía cualquier enlace compartido en
+  // «página no encontrada» mientras la API estuviera abajo.
+  if (store.error && store.productos.length === 0) {
+    store.producto = null
+    return
   }
 
   const encontrado = store.productos.find((p) => slugProducto(p) === slug)
 
   if (!encontrado) {
     store.producto = null
+    router.replace(rutaNoEncontrada('producto', slug))
     return
   }
 
   await store.cargarProducto(encontrado.id)
 
+  // El contador de vistas vale para todos, con o sin sesión: no le pide nada
+  // al usuario, sólo que abra la ficha. Para que la misma persona recargando
+  // no lo infle, la visita se registra UNA vez por día y por navegador.
+  avisarVisita(encontrado.id)
+}
+
+// Fecha en YYYY-MM-DD, suficiente para comparar el día, no la hora.
+const hoy = () => new Date().toISOString().slice(0, 10)
+
+async function avisarVisita(id) {
+  const clave = `cep:visto:${id}`
+  let diaAnterior
+
+  try {
+    diaAnterior = localStorage.getItem(clave)
+  } catch {
+    // Almacenamiento bloqueado (privado): se registra igual, sin recordar.
+    registrarVisita(id)
+    return
+  }
+
+  if (diaAnterior === hoy()) return
+
+  try {
+    await registrarVisita(id)
+    localStorage.setItem(clave, hoy())
+  } catch {
+    // El contador no debe romper la visita: si el servicio falla, la ficha
+    // sigue. No es un dato por el que valga una pantalla de error.
+  }
 }
 
 watch(() => props.slug, cargarPorSlug, { immediate: true })

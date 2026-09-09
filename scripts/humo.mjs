@@ -125,14 +125,23 @@ try {
       '/src/modules/comparador/services/producto.adapter.js',
     )
 
-    // Forma exacta que devuelve ProductResponse en el backend ASP.NET Core.
+    // Forma exacta que devuelve ProductResponse en el backend ASP.NET Core,
+    // más una fila plana para cubrir el despliegue gradual desde el contrato
+    // anterior.
     const FILAS = [
-      { id: 2, externalId: 'rip-2', store: 'Ripley', name: 'Polera básica', brand: 'Basement', category: 'Poleras', price: 9990, sizes: { xs: true, s: true }, description: 'Algodón', url: 'https://example.com/2', image: null, active: true },
-      { id: 4, store: 'Ripley', name: 'Polera manga larga', brand: 'Basement', category: 'Poleras', price: 15990, sizes: { m: true }, active: false },
-      { id: 5, store: 'Zara', name: 'Jeans slim', brand: 'Zara', category: ' Pantalones ', price: 29990, sizes: { l: true, xl: true }, active: true },
+      { id: 2, canonicalKey: 'polera-basica', name: 'Polera básica', brand: 'Basement', category: 'Poleras', description: 'Algodón', image: null, visits: 17, createdAt: '2026-09-01T00:00:00Z', offers: [
+        { externalId: 'rip-2', store: 'Ripley', price: 9990, sizes: ['XS', 'S'], url: 'https://example.com/2', image: 'https://example.com/2.jpg', active: true, updatedAt: '2026-09-08T00:00:00Z' },
+        { externalId: 'par-2', store: 'Paris', price: 10990, sizes: ['36', '37.5'], url: 'https://example.com/par-2', image: null, active: true, updatedAt: '2026-09-09T00:00:00Z' },
+      ] },
+      { id: 4, canonicalKey: 'polera-manga-larga', name: 'Polera manga larga', brand: 'Basement', category: 'Poleras', offers: [
+        { externalId: 'rip-4', store: 'Ripley', price: 15990, sizes: ['M'], active: false },
+      ] },
+      { id: 5, canonicalKey: 'jeans-slim', name: 'Jeans slim', brand: 'Zara', category: ' Pantalones ', offers: [
+        { externalId: 'zar-5', store: 'Zara', price: 29990, sizes: ['L', 'XL'], active: true },
+      ] },
       { id: 8, store: null, name: 'Sin tienda', brand: '', category: '', price: 100, sizes: {}, active: true },
-      { id: 9, store: 'Paris', name: '', brand: 'X', category: 'Poleras', price: 100, sizes: {}, active: true },
-      { id: 10, store: 'Paris', name: 'Rota', brand: 'X', category: 'Poleras', price: 'x', sizes: {}, active: true },
+      { id: 9, name: '', brand: 'X', category: 'Poleras', offers: [{ store: 'Paris', price: 100 }] },
+      { id: 10, name: 'Rota', brand: 'X', category: 'Poleras', offers: [{ store: 'Paris', price: 'x' }] },
     ]
 
     const adaptados = adaptarProductos(FILAS)
@@ -146,11 +155,17 @@ try {
       adaptados.find((p) => p.id === '8').categoria === '')
     check('  active=false se traduce a sin stock',
       adaptados.find((p) => p.id === '4').precios[0].stock === false)
-    check('  adapta marca y externalId',
+    check('  adapta marca y canonicalKey',
       adaptados.find((p) => p.id === '2').marca === 'Basement' &&
-      adaptados.find((p) => p.id === '2').codigo === 'rip-2')
-    check('  convierte el objeto sizes en tallas disponibles',
+      adaptados.find((p) => p.id === '2').codigo === 'polera-basica')
+    check('  conserva tallas de ropa y numéricas',
       adaptados.find((p) => p.id === '2').precios[0].tallas.join(',') === 'XS,S')
+    check('  conserva tallas numéricas con decimal',
+      adaptados.find((p) => p.id === '2').precios[1].tallas.join(',') === '36,37.5')
+    check('  usa la imagen de una oferta cuando falta en el producto',
+      adaptados.find((p) => p.id === '2').imagen === 'https://example.com/2.jpg')
+    check('  conserva las visitas del producto',
+      adaptados.find((p) => p.id === '2').vistas === 17)
     check('  sin precio de lista no inventa descuento',
       adaptados.every((p) => p.precios[0].precioLista === null))
     check('  historial vacío, no undefined',
@@ -159,7 +174,9 @@ try {
     check('descarta filas sin nombre', !adaptados.some((p) => p.nombre === ''))
     check('descarta precios que no son números', !adaptados.some((p) => p.nombre === 'Rota'))
 
-    check('cada precio queda asociado a su tienda',
+    check('un mismo producto conserva varias ofertas',
+      adaptados.find((p) => p.id === '2').precios.length === 2)
+    check('cada oferta queda asociada a su tienda',
       adaptados.find((p) => p.id === '2').precios[0].tienda === 'ripley' &&
       adaptados.find((p) => p.id === '5').precios[0].tienda === 'zara')
     check('sin tienda usa una fuente neutra',
@@ -174,9 +191,9 @@ try {
 
     const { precioMasBajo: pmb, ahorroMaximo: am } = await load('/src/shared/utils/precios.js')
     const polera = adaptados.find((p) => p.id === '2')
-    check('el cálculo de precio sigue funcionando con una sola oferta',
+    check('el cálculo elige la oferta más barata',
       pmb(polera).precio === 9990)
-    check('  y el ahorro es cero: no hay nada que comparar', am(polera) === 0)
+    check('  y calcula el ahorro entre tiendas', am(polera) === 1000)
     check('  un producto sin stock no tiene precio más bajo',
       pmb(adaptados.find((p) => p.id === '4')) === null)
   }
@@ -194,6 +211,55 @@ try {
   const uno = await svc.obtenerProducto('2')
   check('obtenerProducto(id) devuelve el producto', uno?.nombre?.includes('Jeans'), uno?.nombre)
   check('obtenerProducto(id inexistente) devuelve null', (await svc.obtenerProducto('nope')) === null)
+
+  // ——— la caché comparte la petición, pero `forzar` la descarta ———
+  //
+  // Con los datos de ejemplo la caché ni se toca, así que hace falta una URL
+  // de verdad. Se levanta un servidor propio que CUENTA las peticiones: así la
+  // prueba no depende de que el backend esté arriba y responde a lo único que
+  // importa —cuántas veces se salió a la red—, que es justo lo que no se ve
+  // mirando el valor devuelto.
+  {
+    const { createServer: crearHttp } = await import('node:http')
+    let peticiones = 0
+
+    const servidor = crearHttp((_, res) => {
+      peticiones++
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('[]')
+    })
+
+    await new Promise((listo) => servidor.listen(0, '127.0.0.1', listo))
+    const url = `http://127.0.0.1:${servidor.address().port}`
+
+    // `define` inyecta la URL base sin necesidad de un archivo .env nuevo: el
+    // módulo lee import.meta.env.VITE_API_BASE_URL al cargarse.
+    const conApi = await createServer({
+      mode: 'test',
+      define: { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify(url) },
+      server: { middlewareMode: true, hmr: false, ws: false },
+      appType: 'custom',
+      logLevel: 'error',
+    })
+
+    try {
+      const s = await conApi.ssrLoadModule(
+        '/src/modules/comparador/services/comparador.service.js',
+      )
+
+      await s.obtenerProductos()
+      await s.obtenerProductos()
+      check('dos cargas seguidas comparten una sola petición',
+        peticiones === 1, `${peticiones} petición(es)`)
+
+      await s.obtenerProductos({ forzar: true })
+      check('  y `forzar` sí vuelve a salir a la red',
+        peticiones === 2, `${peticiones} petición(es)`)
+    } finally {
+      await conApi.close()
+      await new Promise((listo) => servidor.close(listo))
+    }
+  }
 
   console.log('\n=== utilidades de precio ===')
   const { precioMasBajo, ahorroMaximo, descuento } = await load('/src/shared/utils/precios.js')
@@ -278,6 +344,25 @@ try {
   console.log('\n=== derivados de la portada ===')
   const st = (() => { setActivePinia(createPinia()); return useComparadorStore() })()
   await st.cargarProductos()
+
+  // ——— cómo se pide la ficha de un producto en las pruebas ———
+  //
+  // Desde el commit 07872b8 la URL del detalle es el slug del nombre y ya no
+  // el id: /producto/polera-basica-de-algodon. Las pruebas siguen razonando
+  // por id, que es lo que identifica al producto en los datos de ejemplo, así
+  // que la traducción vive acá y en un solo sitio.
+  const { slugProducto } = await load('/src/shared/utils/slug.js')
+  const rutaProducto = (id) => `/producto/${slugProducto(st.productoById(id))}`
+
+  // La vista resuelve slug -> id contra el catálogo del store y con ese id
+  // llama a `cargarProducto`. Sustituirlo por un no-op deja la ficha vacía:
+  // el doble tiene que dejar el producto puesto. Lee del catálogo ya cargado,
+  // así que no toca la red y da siempre lo mismo.
+  const sinRed = (store) => {
+    store.cargarProducto = async (id) => {
+      store.producto = store.productoById(id)
+    }
+  }
 
   check('lo más reciente ordena por antigüedad', st.masRecientes[0].id === '3', `${st.masRecientes[0].nombre} (${st.masRecientes[0].agregadoHace}d)`)
   check('lo más visto ordena por visitas', st.masVistos[0].id === '5', `${st.masVistos[0].vistas} visitas`)
@@ -424,8 +509,13 @@ try {
     // Se mira el ELEMENTO, no el archivo entero: la primera versión buscaba la
     // cadena «Recién agregado» en todo el fichero y la encontraba… en el
     // comentario que explica por qué se quitó.
+    // El patrón admite otros atributos antes de `class` —hoy hay un v-if que
+    // evita pintar el epígrafe vacío— porque lo que se comprueba es que el
+    // elemento lleve `truncar` y contenga solo la antigüedad, no en qué orden
+    // están escritos sus atributos. Exigir `class` primero hacía fallar la
+    // prueba por una mejora del componente.
     check('el epígrafe de la tarjeta cabe en una línea',
-      /<p class="mono banner__eyebrow truncar">\{\{ antiguedad \}\}<\/p>/.test(banner))
+      /<p [^>]*class="mono banner__eyebrow truncar"[^>]*>\{\{ antiguedad \}\}<\/p>/.test(banner))
     check('  la tarjeta no recorta en silencio lo que crezca',
       /min-height: 168px/.test(banner) && !/^\s*height: 168px/m.test(banner))
     check('  el botón queda al fondo, alineado con el de al lado',
@@ -575,12 +665,13 @@ try {
   check('  y marca esa fila como la mejor', /tarjeta__oferta--mejor[\s\S]{0,220}?tarjeta__tienda[^>]*>H&amp;M/.test(home))
   check('  con el precio correcto', home.includes('$8.990'))
 
-  const detalle = await render('/producto/1', async (s) => {
-    await s.cargarProducto('1')
-    // El watch inmediato de la vista volvería a pedir el producto y a dejarlo
-    // en null; SSR no puede esperar esa promesa. En el navegador sí ocurre y
-    // por eso la vista tiene su estado de carga.
-    s.cargarProducto = async () => {}
+  const detalle = await render(rutaProducto('1'), async (s) => {
+    // El watch inmediato de la vista pide el producto por su cuenta y SSR no
+    // puede esperar esa promesa, así que el catálogo tiene que estar cargado
+    // antes y `cargarProducto` tiene que responder sin red. En el navegador la
+    // espera sí ocurre, y por eso la vista tiene su estado de carga.
+    await s.cargarProductos()
+    sinRed(s)
   })
   check('ProductoDetailView renderiza', detalle.length > 400, `${detalle.length} bytes`)
   check('  muestra dónde comprarla',
@@ -825,14 +916,18 @@ try {
     const p = createPinia()
     setActivePinia(p)
     const st = useComparadorStore()
+    // El producto va también en el catálogo: la vista resuelve el slug de la
+    // URL contra `productos`, no contra `producto`. Si solo estuviera en el
+    // segundo, no lo encontraría y pintaría la ficha como "ya no está".
+    st.productos = [real]
     st.producto = real
     st.tiendas = [{ id: 'catalogo', nombre: 'Precio publicado', color: '#0b5cad' }]
-    st.cargarProducto = async () => {}
+    st.cargarProducto = async () => { st.producto = real }
 
     const router = createRouter({ history: createMemoryHistory(), routes })
     const app = createSSRApp(App)
     app.use(p).use(router)
-    await router.push('/producto/2')
+    await router.push(`/producto/${slugProducto(real)}`)
     await router.isReady()
     const html = await renderToString(app)
 
@@ -905,9 +1000,11 @@ try {
     // pasaría igual aunque el catch siguiera vaciando la lista.
     const muerto = await createServer({
       mode: 'fallo',
-      // hmr:false porque ya hay otra instancia de Vite arriba y las dos
-      // pelearían por el puerto del WebSocket.
-      server: { middlewareMode: true, hmr: false },
+      // hmr y ws en false: ya hay otra instancia de Vite arriba y las dos
+      // pelearían por el puerto del WebSocket. `hmr: false` solo no basta —
+      // en modo middleware Vite sigue levantando el servidor de ws y escupe
+      // «Port 24678 is already in use» en medio de la salida de las pruebas.
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'custom',
       logLevel: 'error',
     })
@@ -1167,10 +1264,9 @@ try {
   console.log('\n=== ficha de producto ===')
   {
     const ver = (id) =>
-      render(`/producto/${id}`, async (st) => {
+      render(rutaProducto(id), async (st) => {
         await st.cargarProductos()
-        st.producto = st.productoById(id)
-        st.cargarProducto = async () => {}
+        sinRed(st)
       })
 
     const completa = await ver('1')
@@ -1234,12 +1330,16 @@ try {
     // buscar un producto pelado en el catálogo: ahora todos tienen ficha, y una
     // prueba que depende de eso deja de comprobar nada en cuanto cambian los
     // datos.
-    const pelada = await render('/producto/1', async (st) => {
+    const pelada = await render(rutaProducto('1'), async (st) => {
       await st.cargarProductos()
       const base = st.productoById('1')
 
-      st.producto = { ...base, specs: [], pros: [], contras: [], destacadas: [] }
-      st.cargarProducto = async () => {}
+      // Aquí no vale `sinRed`: lo que se quiere pintar no es el producto del
+      // catálogo sino esta versión sin ficha, y el watch de la vista pisaría
+      // cualquier cosa que se dejara puesta a mano.
+      st.cargarProducto = async () => {
+        st.producto = { ...base, specs: [], pros: [], contras: [], destacadas: [] }
+      }
     })
 
     check('un producto sin características no deja huecos',
@@ -1306,10 +1406,9 @@ try {
 
   console.log('\n=== gráfico de precios ===')
   {
-    const conHistorial = await render('/producto/1', async (st) => {
+    const conHistorial = await render(rutaProducto('1'), async (st) => {
       await st.cargarProductos()
-      st.producto = st.productoById('1')
-      st.cargarProducto = async () => {}
+      sinRed(st)
     })
 
     const trozo = conHistorial.slice(conHistorial.indexOf('Historial de precios'))
@@ -1391,10 +1490,9 @@ try {
 
   console.log('\n=== enlaces a la tienda ===')
   {
-    const detalle = await render('/producto/1', async (st) => {
+    const detalle = await render(rutaProducto('1'), async (st) => {
       await st.cargarProductos()
-      st.producto = st.productoById('1')
-      st.cargarProducto = async () => {}
+      sinRed(st)
     })
 
     check('la ficha ofrece ir a la tienda', detalle.includes('Ver en'))
@@ -1530,9 +1628,9 @@ try {
     // ids van vacíos y AdSlot no pinta nada.
     const conBloques = await createServer({
       mode: 'anuncios',
-      // hmr:false: ya hay otra instancia de Vite arriba y pelearían por el
-      // puerto del WebSocket.
-      server: { middlewareMode: true, hmr: false },
+      // hmr y ws en false: ya hay otra instancia de Vite arriba y pelearían
+      // por el puerto del WebSocket. `hmr: false` solo no basta.
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'custom',
       logLevel: 'error',
     })
@@ -1553,8 +1651,13 @@ try {
         await st.cargarProductos()
 
         if (ruta.startsWith('/producto/')) {
-          st.producto = st.productoById(ruta.split('/').pop())
-          st.cargarProducto = async () => {}
+          // La ruta trae el slug; la vista lo resuelve contra el catálogo y
+          // pide el producto por id. Sin este doble la ficha se pinta como
+          // "ya no está" y el bloque de anuncio pasaría la comprobación sobre
+          // una página de error, que es justo lo que AdSense prohíbe.
+          st.cargarProducto = async (id) => {
+            st.producto = st.productoById(id)
+          }
         }
 
         const router = createRouter({ history: createMemoryHistory(), routes: rutasAnuncio })
@@ -1569,7 +1672,7 @@ try {
       for (const ruta of [
         '/',
         '/comparador',
-        '/producto/1',
+        rutaProducto('1'),
         '/outfits',
         '/armar',
         '/terminos',
@@ -1891,11 +1994,35 @@ try {
     check('  y descarta caracteres de control',
       textoDeUrl('pol\u0000er\u001fa') === 'polera')
 
-    // La ruta declara la forma del id: una basura ni llega a la vista.
-    const basura = await render('/producto/no-soy-un-id', () => {})
+    // El patrón `:slug` acepta cualquier texto, así que la forma ya no filtra
+    // nada: quien decide es el guard de la ruta, comparando contra el catálogo.
+    // Por eso hay que cargarlo antes; es lo que ocurre al navegar dentro de la
+    // aplicación, que es de donde sale casi todo el tráfico.
+    const cargado = async (st) => { await st.cargarProductos() }
+
+    const basura = await render('/producto/no-soy-un-id', cargado)
     check('  /producto/<basura> cae en el 404', basura.includes('404'))
-    const negativo = await render('/producto/-1', () => {})
+    const negativo = await render('/producto/-1', cargado)
     check('  /producto/-1 también', negativo.includes('404'))
+
+    // Y el caso contrario, que es el que costó caro: SIN catálogo cargado el
+    // guard NO puede afirmar que el producto no existe. Si respondiera 404 ahí,
+    // con la API caída todo enlace compartido diría «página no encontrada» en
+    // vez de enseñar el error con reintento que la vista ya tiene.
+    const rutas = (await load('/src/modules/comparador/routes.js')).default
+    const detalle = rutas.find((r) => r.name === 'producto-detalle')
+
+    setActivePinia(createPinia())
+    check('  sin catálogo cargado el guard NO afirma que no existe',
+      detalle.beforeEnter({ params: { slug: 'lo-que-sea' } }) === true)
+
+    // Con el catálogo en memoria sí decide, y decide bien.
+    const conCatalogo = (() => { setActivePinia(createPinia()); return useComparadorStore() })()
+    await conCatalogo.cargarProductos()
+    check('  con catálogo cargado sí redirige',
+      detalle.beforeEnter({ params: { slug: 'no-existe-esta-prenda' } })?.name === 'no-encontrado')
+    check('  y deja pasar un slug real',
+      detalle.beforeEnter({ params: { slug: slugProducto(conCatalogo.productos[0]) } }) === true)
   }
 
   const s404 = await render('/ruta-que-no-existe', () => {})
@@ -1933,14 +2060,14 @@ try {
   const salud = await pedir('/health')
   check(`el servicio responde en ${API}`, salud.estado === 200, `/health ${salud.estado}`)
 
-  const sinVersion = await pedir('/api/products')
+  const sinVersion = await pedir('/productos')
   check(
     'el gateway responde aunque el navegador no envíe la versión',
     sinVersion.estado === 200,
     `HTTP ${sinVersion.estado}`,
   )
 
-  const conVersion = await pedir('/api/products', { Version: VERSION })
+  const conVersion = await pedir('/productos', { Version: VERSION })
   check(
     `con Version: ${VERSION} responde 200`,
     conVersion.estado === 200,
@@ -1979,9 +2106,54 @@ try {
     const categorias = adaptarCategorias(filas)
     check('  deriva categorías desde la misma respuesta',
       categorias.every((c) => c.nombre !== ''))
+
+    // Dos tiendas venden la misma prenda con el mismo nombre. Si el slug sale
+    // solo del nombre, las dos comparten URL: la ficha resuelve con `find` y
+    // devuelve la primera, así que la segunda oferta no tiene ninguna
+    // dirección que lleve a ella —y el sitemap emite la misma URL dos veces—.
+    // Se comprueba contra los datos REALES porque con los de ejemplo no pasa:
+    // ahí cada producto ya trae sus tiendas dentro.
+    // El store ordena la portada por `vistas` y `agregadoHace`. Si el
+    // adaptador escribiera otro nombre —pasó con `visitas`—, las dos secciones
+    // ordenarían por undefined y no lo notaría nadie: no hay error, solo un
+    // orden que no es el que dice el título. Con los datos de ejemplo tampoco
+    // se ve, porque ahí los campos vienen puestos.
+    check(
+      '  produce los campos por los que la portada ordena',
+      adaptados.every((p) => 'vistas' in p && 'agregadoHace' in p),
+      Object.keys(adaptados[0]).filter((k) => k === 'vistas' || k === 'agregadoHace').join(', ') || 'ninguno',
+    )
+
+    // Y que esos campos traigan el dato de la API, no un relleno. `vistas`
+    // tiene que ser un número —puede ser 0, un producto puede no tener
+    // visitas— y `agregadoHace` un número de días, no null: si el backend
+    // dejara de mandar `createdAt`, «Lo más reciente» volvería a ordenar por
+    // nada y nadie se enteraría.
+    check(
+      '  con el contador de visitas del backend',
+      adaptados.every((p) => Number.isFinite(p.vistas)),
+      `máx ${Math.max(...adaptados.map((p) => p.vistas))}`,
+    )
+    check(
+      '  y con la antigüedad calculada de createdAt',
+      adaptados.every((p) => Number.isFinite(p.agregadoHace)),
+      adaptados.every((p) => Number.isFinite(p.agregadoHace))
+        ? `${adaptados[0].agregadoHace} días el primero`
+        : 'algún producto sin fecha',
+    )
+
+    const { slugProducto: slugDe } = await import('../src/shared/utils/slug.js')
+    const slugs = adaptados.map((p) => slugDe(p))
+    const repetidos = slugs.filter((s, i) => slugs.indexOf(s) !== i)
+
+    check(
+      '  cada producto tiene una URL propia',
+      repetidos.length === 0,
+      repetidos.length > 0 ? `repetidos: ${[...new Set(repetidos)].join(', ')}` : `${slugs.length} slugs únicos`,
+    )
   }
 
-  const cors = await fetch(`${API}/api/products`, {
+  const cors = await fetch(`${API}/productos`, {
     headers: { Version: VERSION, Origin: 'http://localhost:5173' },
   })
   const permite = cors.headers.get('access-control-allow-origin')
@@ -2472,11 +2644,22 @@ console.log('\n=== listo para publicar ===')
       ?.map((m) => m.slice(7, -1)) ?? [],
   )
 
-  const rutasReales = rutasDelRouter
+  const coincideConRuta = (pathname) => [...rutasDelRouter].some((patron) => {
+    if (patron.includes('pathMatch')) return false
+    if (!patron.includes(':')) return patron === pathname
+
+    const expresion = patron
+      .split('/')
+      .map((segmento) => (segmento.startsWith(':') ? '[^/]+' : segmento))
+      .join('/')
+
+    return new RegExp(`^${expresion}$`).test(pathname)
+  })
 
   check('  todas sus URLs son rutas reales del router',
-    urls.every((u) => rutasReales.has(new URL(u).pathname)),
-    urls.map((u) => new URL(u).pathname).join(' '))
+    urls.every((u) => coincideConRuta(new URL(u).pathname)),
+    urls.filter((u) => !coincideConRuta(new URL(u).pathname))
+      .map((u) => new URL(u).pathname).join(' ') || `${urls.length} rutas válidas`)
 
   // El script de despliegue tiene que existir y ser ejecutable.
   check('existe el script de despliegue', leer('scripts/desplegar.sh') !== null)
