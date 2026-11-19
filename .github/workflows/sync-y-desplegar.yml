@@ -1,4 +1,4 @@
-name: Sincronizar desde monorepo y desplegar
+name: Sincronizar desde monorepo
 
 on:
   schedule:
@@ -47,27 +47,19 @@ jobs:
           fi
           echo "sha=$(git -C /tmp/mono rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Decidir si publicar
-        id: go
-        run: |
-          if [ "${{ steps.diff.outputs.changed }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/setup-node@v4
-        if: steps.go.outputs.run == 'true'
+        if: steps.diff.outputs.changed == 'true'
         with:
           node-version: 22
           cache: npm
 
-      - name: Compilar
-        if: steps.go.outputs.run == 'true'
+      - name: Comprobar que compila
+        if: steps.diff.outputs.changed == 'true'
         run: |
           npm ci
           npm run build
 
+      # Solo llega aquí si compiló. Cloudflare detecta el push a main y despliega.
       - name: Commit a main
         if: steps.diff.outputs.changed == 'true'
         run: |
@@ -75,11 +67,3 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: sincroniza frontend desde monorepo (${{ steps.diff.outputs.sha }})"
           git push origin HEAD:main
-
-      - name: Desplegar a Cloudflare
-        if: steps.go.outputs.run == 'true'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
