@@ -1,0 +1,69 @@
+name: Sincronizar desde monorepo
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [monorepo-frontend-changed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-frontend
+  cancel-in-progress: false
+
+env:
+  MONO_REPO: https://github.com/Martinnnn-ops/cacha-el-precio.git
+  MONO_BRANCH: development
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Traer el monorepo
+        run: git clone --depth 1 --branch "$MONO_BRANCH" "$MONO_REPO" /tmp/mono
+
+      - name: Copiar frontend/ (conservando archivos propios de este repo)
+        run: |
+          rsync -a --delete \
+            --exclude='.git' --exclude='.github' --exclude='wrangler.jsonc' \
+            --exclude='node_modules' --exclude='dist' \
+            /tmp/mono/frontend/ ./
+
+      - name: ¿Hay cambios?
+        id: diff
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$(git -C /tmp/mono rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Comprobar que compila
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          npm ci
+          npm run build
+
+      # Solo llega aquí si compiló. Cloudflare detecta el push a main y despliega.
+      - name: Commit a main
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sincroniza frontend desde monorepo (${{ steps.diff.outputs.sha }})"
+          git push origin HEAD:main
